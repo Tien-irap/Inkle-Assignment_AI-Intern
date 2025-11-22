@@ -2,8 +2,13 @@ import os
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    MONGO_URI: str
-    MONGO_DB_NAME: str
+    # Storage mode: "mongodb" or "local"
+    STORAGE_MODE: str = "local"
+    
+    # MongoDB Configuration (only needed if STORAGE_MODE=mongodb)
+    MONGO_URI: str = "mongodb://localhost:27017"
+    MONGO_DB_NAME: str = "travel_agent_db"
+    
     LOGGER: int = 20
     
     # LLM Provider Selection

@@ -4,6 +4,7 @@ Building a multi-agent tourism system with LangGraph-inspired state management
 ## ✨ Key Features
 
 - **🧠 Multi-Provider LLM Support**: Choose from Mistral, OpenAI, Anthropic Claude, or Groq
+- **💾 Flexible Storage**: Choose between local JSON files or MongoDB
 - **🎯 Deterministic State Management**: LangGraph-inspired architecture eliminates LLM hallucination in context handling
 - **💬 Natural Language Processing**: Understands queries like "What's the weather in Paris?"
 - **📍 Smart Location Tracking**: State-based location persistence across conversation
@@ -21,7 +22,7 @@ Building a multi-agent tourism system with LangGraph-inspired state management
 ## 🚀 Quick Start with Docker
 
 ### Prerequisites
-- Docker and Docker Compose installed
+- Docker and Docker Compose installed (for MongoDB setup)
 - LLM API key (Mistral, OpenAI, Anthropic, or Groq)
 
 ### Setup
@@ -35,31 +36,49 @@ cd Inkle-Assignment_AI-Intern
 2. **Configure environment variables**
 ```bash
 cp .env.example .env
-# Edit .env and configure your LLM provider:
-# - Set LLM_PROVIDER (mistral, openai, anthropic, or groq)
-# - Add your API key for the chosen provider
+# Edit .env and configure:
+# - Storage mode (local or mongodb)
+# - LLM provider and API key
 ```
 
 Example `.env` configuration:
+
+**Option A: Local Storage (Simplest - No MongoDB needed)**
 ```bash
-# Choose provider: mistral, openai, anthropic, or groq
+STORAGE_MODE=local
 LLM_PROVIDER=mistral
 MISTRAL_API_KEY=your_key_here
-
-# Or use OpenAI:
-# LLM_PROVIDER=openai
-# OPENAI_API_KEY=your_key_here
+LOGGER=20
 ```
 
-3. **Start all services**
+**Option B: MongoDB Storage (Persistent across restarts)**
 ```bash
+STORAGE_MODE=mongodb
+MONGO_URI=mongodb://localhost:27017
+MONGO_DB_NAME=travel_agent_db
+LLM_PROVIDER=mistral
+MISTRAL_API_KEY=your_key_here
+LOGGER=20
+```
+
+3. **Start the application**
+
+**With Local Storage (No Database):**
+```bash
+# Start backend
+cd backend
+uvicorn app.main:app --reload
+
+# Start frontend (in new terminal)
+cd frontend
+streamlit run app.py
+```
+
+**With MongoDB:**
+```bash
+# Start MongoDB + Backend + Frontend
 docker-compose up -d
 ```
-
-This will start:
-- MongoDB on port 27017
-- Backend API on port 8000
-- Frontend UI on port 8501
 
 4. **Access the application**
 - Frontend: http://localhost:8501
@@ -91,6 +110,28 @@ docker-compose down -v
 
 ## 🛠️ Local Development (without Docker)
 
+### Storage Options
+
+The app supports two storage modes:
+
+1. **Local Storage** (Default)
+   - Saves data to JSON files in `backend/data/` directory
+   - No database setup required
+   - Perfect for development and demos
+   - ⚠️ Data stored locally (lost if folder deleted)
+
+2. **MongoDB Storage**
+   - Persistent database storage
+   - Survives application restarts
+   - Recommended for production
+   - Requires MongoDB installation
+
+Switch between modes by setting `STORAGE_MODE` in `.env`:
+```bash
+STORAGE_MODE=local      # Use JSON files (no MongoDB needed)
+STORAGE_MODE=mongodb    # Use MongoDB (requires MONGO_URI)
+```
+
 ### Backend Setup
 
 1. **Create virtual environment**
@@ -108,16 +149,21 @@ pip install -r backend_requirements.txt
 3. **Configure environment**
 ```bash
 # Create .env file in project root with:
-MONGO_URI=mongodb://localhost:27017
-MONGO_DB_NAME=travel_agent_db
-LLM_PROVIDER=mistral  # or openai, anthropic, groq
+STORAGE_MODE=local                        # Use local JSON storage
+LLM_PROVIDER=mistral                      # or openai, anthropic, groq
 MISTRAL_API_KEY=your_api_key_here
 LOGGER=20
+
+# Optional - Only if using STORAGE_MODE=mongodb:
+# MONGO_URI=mongodb://localhost:27017
+# MONGO_DB_NAME=travel_agent_db
 ```
 
-4. **Start MongoDB** (if not using Docker)
+4. **Start MongoDB** (only if using STORAGE_MODE=mongodb)
 ```bash
 mongod --dbpath /path/to/data
+# Or use Docker:
+docker run -d -p 27017:27017 --name mongodb mongo:latest
 ```
 
 5. **Run backend**
@@ -168,12 +214,28 @@ MISTRAL_API_KEY=your_key_here
 This project uses a **deterministic state management** approach inspired by LangGraph to eliminate LLM hallucination in context handling.
 
 **Key Concept:**
-- **State = Single Source of Truth** stored in MongoDB per session
+- **State = Single Source of Truth** stored per session
 - **Updater Logic**: When user mentions "Paris", state updates `current_location = "Paris"`
 - **Reader Logic**: When user says "weather there?", reads `current_location` from state (not from LLM context)
 - **Result**: No hallucination, deterministic behavior
+- **Storage**: Works with both local JSON files and MongoDB
 
 📚 **Architecture & testing details**: [TESTING_GUIDE.md](./TESTING_GUIDE.md)
+
+### Storage Architecture
+
+**Local Storage Mode (`STORAGE_MODE=local`)**
+```
+backend/data/
+├── chats/        # Chat history per session
+├── state/        # Session state (location, shown places)
+└── cache/        # Weather & places cache (1-hour expiry)
+```
+
+**MongoDB Mode (`STORAGE_MODE=mongodb`)**
+- Collections: `chats`, `conversation_states`, `weather_cache`, `places_cache`
+- Persistent across all restarts
+- Suitable for production deployments
 
 ### Project Structure
 
@@ -183,11 +245,17 @@ This project uses a **deterministic state management** approach inspired by Lang
 │   │   ├── core/        # Configuration, DB, LLM providers, State Management
 │   │   │   ├── llm_connection.py      # Main LLM service
 │   │   │   ├── llm_providers.py       # Provider implementations
-│   │   │   └── config.py              # Multi-provider settings
+│   │   │   └── config.py              # Multi-provider + storage settings
 │   │   ├── models/      # Pydantic models
 │   │   ├── repos/       # Database repositories
+│   │   │   ├── base_repo.py          # MongoDB repository
+│   │   │   └── local_repo.py         # Local JSON file repository
 │   │   ├── routes/      # API routes
 │   │   └── services/    # Business logic + State management
+│   ├── data/           # Local storage (when STORAGE_MODE=local)
+│   │   ├── chats/      # Chat history
+│   │   ├── state/      # Session states
+│   │   └── cache/      # Weather & places cache
 │   ├── Dockerfile
 │   └── backend_requirements.txt
 │
@@ -198,6 +266,7 @@ This project uses a **deterministic state management** approach inspired by Lang
 │
 ├── docker-compose.yml   # Docker orchestration
 ├── .env                 # Environment variables
+├── LOCAL_STORAGE_GUIDE.md  # Local vs MongoDB storage guide
 ├── LLM_PROVIDERS.md     # Multi-provider configuration guide
 ├── LLM_QUICK_REFERENCE.md  # Quick LLM setup reference
 ├── TESTING_GUIDE.md     # Comprehensive testing + architecture guide
@@ -206,10 +275,10 @@ This project uses a **deterministic state management** approach inspired by Lang
 
 ## 🔧 Technology Stack
 
-- **Backend**: FastAPI, Uvicorn, Motor (async MongoDB)
+- **Backend**: FastAPI, Uvicorn
+- **Storage**: Local JSON files or MongoDB (async with Motor)
 - **State Management**: LangGraph-inspired (langgraph, langchain-core)
 - **Frontend**: Streamlit
-- **Database**: MongoDB
 - **LLM Providers**: Mistral AI, OpenAI, Anthropic Claude, Groq
 - **APIs**: 
   - Open-Meteo (weather data)
@@ -258,6 +327,7 @@ When you ask about places, you'll get three separate sections:
 - **Conversation Memory**: Maintains context throughout your session
 
 ## 📚 Documentation
-
+storage comparison and deployment guide
 - **[RUN.md](RUN.md)** - How to run the application (Docker, Python scripts, manual)
 - **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Comprehensive testing scenarios
+

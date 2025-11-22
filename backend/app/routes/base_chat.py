@@ -1,30 +1,36 @@
 from fastapi import APIRouter, HTTPException, Depends
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from typing import Optional
 
-# Importing from your specific folder structure (based on screenshot)
-# Ensure the classes inside these files match the names used here
-try:
-    # Try the structure from your screenshot
-    from app.models.base_model import ChatRequest, ChatResponse
-    from app.services.Parent_service import ParentAgent
-    from app.repos.base_repo import ChatRepository
-except ImportError:
-    # Fallback to flat structure if you haven't moved the code inside the files yet
-    from app.models import ChatRequest, ChatResponse
-    from app.services.Parent_service import ParentAgent
-    from app.repos.base_repo import ChatRepository
-
+from app.models.base_model import ChatRequest, ChatResponse
+from app.services.Parent_service import ParentAgent
+from app.repos.base_repo import ChatRepository
+from app.repos.local_repo import LocalRepository
 from app.core.db_connection import get_db
+from app.core.config import settings
 from app.core.logger import logs
 
 router = APIRouter()
 
 # --- Dependency Injection Helper ---
-def get_repository(db: AsyncIOMotorDatabase = Depends(get_db)) -> ChatRepository:
-    return ChatRepository(db)
+async def get_repository():
+    """Get the appropriate repository based on storage mode."""
+    if settings.STORAGE_MODE == "local":
+        return LocalRepository()
+    else:
+        db = await get_db()
+        return ChatRepository(db)
 
-def get_agent(repo: ChatRepository = Depends(get_repository), db: AsyncIOMotorDatabase = Depends(get_db)) -> ParentAgent:
-    return ParentAgent(repo, db)
+async def get_agent() -> ParentAgent:
+    """Get Parent Agent with the appropriate repository."""
+    repo = await get_repository()
+    
+    if settings.STORAGE_MODE == "local":
+        # For local storage, pass None as db since it won't be used
+        return ParentAgent(repo, None)
+    else:
+        db = await get_db()
+        return ParentAgent(repo, db)
 
 # --- The Endpoint ---
 @router.post("/chat", response_model=ChatResponse)

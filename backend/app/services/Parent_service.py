@@ -18,14 +18,57 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 class ParentAgent:
     def __init__(self, repo: ChatRepository, db: AsyncIOMotorDatabase = None):
         self.repo = repo
+        self.db = db
         self.state_manager = SessionStateManager(db) if db is not None else None
         # Initialize child services
         if db is not None:
             self.weather_service = WeatherService(WeatherRepository(db))
             self.places_service = PlacesService(PlacesRepository(db))
         else:
-            self.weather_service = None
-            self.places_service = None
+            # For local storage, use the repo for caching
+            self.weather_service = WeatherService(repo)
+            self.places_service = PlacesService(repo)
+    
+    async def _get_session_state(self, session_id: str) -> dict:
+        """Get session state - works with both MongoDB and local storage."""
+        if self.state_manager:
+            state = await self.state_manager.get_state(session_id)
+            return state if isinstance(state, dict) else state.__dict__
+        else:
+            # Use repository's session state
+            state = await self.repo.get_session_state(session_id)
+            return state or {
+                "current_location": None,
+                "current_lat": None,
+                "current_lon": None,
+                "shown_places": []
+            }
+    
+    async def _update_location(self, session_id: str, location_name: str, lat: float, lon: float):
+        """Update location in state - works with both MongoDB and local storage."""
+        if self.state_manager:
+            await self.state_manager.update_location(session_id, location_name, lat, lon)
+        else:
+            # Use repository's session state
+            state = await self.repo.get_session_state(session_id) or {}
+            state.update({
+                "current_location": location_name,
+                "current_lat": lat,
+                "current_lon": lon
+            })
+            await self.repo.update_session_state(session_id, state)
+    
+    async def _add_shown_places(self, session_id: str, places: list[str]):
+        """Add shown places to state - works with both MongoDB and local storage."""
+        if self.state_manager:
+            await self.state_manager.add_shown_places(session_id, places)
+        else:
+            # Use repository's session state
+            state = await self.repo.get_session_state(session_id) or {}
+            shown_places = state.get("shown_places", [])
+            shown_places.extend([p for p in places if p not in shown_places])
+            state["shown_places"] = shown_places
+            await self.repo.update_session_state(session_id, state)
 
     async def process_request(self, request: ChatRequest) -> ChatResponse:
         """
@@ -38,8 +81,8 @@ class ParentAgent:
         response_data = {}
         
         # --- Step 0: Get Session State (THE KEY DIFFERENCE) ---
-        # Load persistent state from MongoDB - this is our "memory"
-        session_state = await self.state_manager.get_state(request.session_id)
+        # Load persistent state from storage - this is our "memory"
+        session_state = await self._get_session_state(request.session_id)
         logs.log(logging.INFO, f"Loaded session state - current_location: {session_state.get('current_location')}")
         
         # --- Step A: Entity Extraction & Geocoding (State-based) ---
@@ -55,7 +98,7 @@ class ParentAgent:
             
             if location:
                 # UPDATE STATE - This persists across all future messages
-                await self.state_manager.update_location(
+                await self._update_location(
                     request.session_id,
                     location.name,
                     location.lat,
@@ -173,7 +216,7 @@ class ParentAgent:
                     places_to_show_names = [p.name for p in places_to_show_objects]
                     
                     # Update STATE with newly shown place names
-                    await self.state_manager.add_shown_places(request.session_id, places_to_show_names)
+                    await self._add_shown_places(request.session_id, places_to_show_names)
                     
                     # Store full Place objects for response formatting
                     places_data = [p.dict() for p in places_to_show_objects]

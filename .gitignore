@@ -43,6 +43,10 @@ myenv/
 logs/
 *.log
 
+# Local data storage (JSON files)
+backend/data/
+data/
+
 # Testing
 .pytest_cache/
 .coverage
