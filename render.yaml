@@ -25,7 +25,7 @@ services:
     runtime: python
     plan: free
     buildCommand: cd frontend && pip install -r frontend_requirements.txt
-    startCommand: cd frontend && streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
+    startCommand: cd frontend && streamlit run app.py --server.port=$PORT --server.address=0.0.0.0 --server.headless=true
     envVars:
       - key: BACKEND_URL
         sync: false  # Set this to your backend URL after backend is deployed
