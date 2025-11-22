@@ -278,6 +278,74 @@ class LLMService:
         except Exception as e:
             logs.log(logging.ERROR, f"LLM places suggestion failed: {str(e)}")
             return []
+    
+    async def get_restaurants_suggestions(self, location_name: str) -> list[str]:
+        """Get top restaurant recommendations from LLM."""
+        system_prompt = (
+            "You are a food expert. Given a city/location, suggest the top restaurants and cafes. "
+            "Include a mix of local cuisine, fine dining, and popular eateries. "
+            "Return ONLY a numbered list of restaurant names, one per line. "
+            "Return 8-10 suggestions maximum."
+        )
+        
+        user_prompt = f"List the best restaurants and cafes in {location_name}."
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            content = await self.provider.generate(messages, temperature=0.3, timeout=15.0)
+            
+            restaurants = []
+            for line in content.split("\n"):
+                line = line.strip()
+                if line and (line[0].isdigit() or line.startswith("-")):
+                    cleaned = line.lstrip("0123456789.-) ")
+                    if cleaned:
+                        restaurants.append(cleaned)
+            
+            logs.log(logging.INFO, f"LLM suggested {len(restaurants)} restaurants for {location_name}")
+            return restaurants[:10]
+
+        except Exception as e:
+            logs.log(logging.ERROR, f"LLM restaurants suggestion failed: {str(e)}")
+            return []
+    
+    async def get_hotels_suggestions(self, location_name: str) -> list[str]:
+        """Get top hotel recommendations from LLM."""
+        system_prompt = (
+            "You are a hospitality expert. Given a city/location, suggest the top hotels and accommodations. "
+            "Include a mix of luxury hotels, boutique hotels, and popular accommodations. "
+            "Return ONLY a numbered list of hotel names, one per line. "
+            "Return 8-10 suggestions maximum."
+        )
+        
+        user_prompt = f"List the best hotels and accommodations in {location_name}."
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        try:
+            content = await self.provider.generate(messages, temperature=0.3, timeout=15.0)
+            
+            hotels = []
+            for line in content.split("\n"):
+                line = line.strip()
+                if line and (line[0].isdigit() or line.startswith("-")):
+                    cleaned = line.lstrip("0123456789.-) ")
+                    if cleaned:
+                        hotels.append(cleaned)
+            
+            logs.log(logging.INFO, f"LLM suggested {len(hotels)} hotels for {location_name}")
+            return hotels[:10]
+
+        except Exception as e:
+            logs.log(logging.ERROR, f"LLM hotels suggestion failed: {str(e)}")
+            return []
 
     async def classify_intent(self, user_message: str) -> str:
         """

@@ -160,24 +160,27 @@ class ParentAgent:
             if self.places_service:
                 try:
                     places_response = await self.places_service.get_places(location.lat, location.lon, location.name)
-                    all_places = [place.name for place in places_response.places]
+                    all_places_objects = places_response.places  # Keep full Place objects
+                    all_place_names = [place.name for place in all_places_objects]
                     
                     # Get previously shown places from STATE (not chat history!)
                     shown_places = set(session_state.get("shown_places", []))
                     logs.log(logging.INFO, f"Found {len(shown_places)} previously shown places in STATE")
                     
                     # Filter out already shown places and show up to 8 new ones
-                    new_places = [p for p in all_places if p not in shown_places]
-                    places_to_show = new_places[:8] if new_places else all_places[:8]
+                    new_place_objects = [p for p in all_places_objects if p.name not in shown_places]
+                    places_to_show_objects = new_place_objects[:8] if new_place_objects else all_places_objects[:8]
+                    places_to_show_names = [p.name for p in places_to_show_objects]
                     
-                    # Update STATE with newly shown places
-                    await self.state_manager.add_shown_places(request.session_id, places_to_show)
+                    # Update STATE with newly shown place names
+                    await self.state_manager.add_shown_places(request.session_id, places_to_show_names)
                     
-                    places_data = places_to_show
+                    # Store full Place objects for response formatting
+                    places_data = [p.dict() for p in places_to_show_objects]
                     response_data["places"] = places_data
                     
-                    if shown_places and new_places:
-                        steps.append(AgentStep(step_name="Places Agent", status="success", details=f"Found {len(places_to_show)} new places (filtered {len(shown_places)} already shown)"))
+                    if shown_places and new_place_objects:
+                        steps.append(AgentStep(step_name="Places Agent", status="success", details=f"Found {len(places_to_show_objects)} new places (filtered {len(shown_places)} already shown)"))
                     else:
                         steps.append(AgentStep(step_name="Places Agent", status="success", details=f"Found {len(places_data)} places"))
                 except Exception as e:
@@ -185,6 +188,21 @@ class ParentAgent:
                     steps.append(AgentStep(step_name="Places Agent", status="failed", details=str(e)))
             else:
                 steps.append(AgentStep(step_name="Places Agent", status="skipped", details="Service not initialized"))
+        
+        # Fetch restaurants and hotels separately
+        if intent in [IntentType.PLACES, IntentType.BOTH]:
+            try:
+                # Get restaurants
+                restaurants = await llm_client.get_restaurants_suggestions(location.name)
+                response_data["restaurants"] = [{"name": r} for r in restaurants[:5]]
+                steps.append(AgentStep(step_name="Restaurants Agent", status="success", details=f"Found {len(restaurants[:5])} restaurants"))
+                
+                # Get hotels
+                hotels = await llm_client.get_hotels_suggestions(location.name)
+                response_data["hotels"] = [{"name": h} for h in hotels[:5]]
+                steps.append(AgentStep(step_name="Hotels Agent", status="success", details=f"Found {len(hotels[:5])} hotels"))
+            except Exception as e:
+                logs.log(logging.ERROR, f"Restaurants/Hotels fetch error: {str(e)}")
 
         # --- Finalize ---
         # Detect if this is a follow-up request (simple keyword matching)
@@ -193,7 +211,7 @@ class ParentAgent:
             for keyword in ["more", "else", "other", "another", "additional"]
         )
         
-        final_msg = self._construct_response_text(intent, location, response_data, is_followup)
+        final_msg = self._construct_response_text(intent, location, response_data, is_followup, request.message)
         
         # Async Save to DB
         await self.repo.save_chat(ChatLog(
@@ -257,52 +275,131 @@ class ParentAgent:
                 logs.log(logging.ERROR, f"Geocoding API error: {str(e)}")
                 return None
 
-    def _construct_response_text(self, intent: IntentType, loc: Location, data: dict, is_followup: bool = False) -> str:
+    def _generate_greeting(self, user_message: str, location_name: str, intent: IntentType) -> str:
+        """Generate a natural, conversational greeting based on user's message."""
+        message_lower = user_message.lower()
+        
+        # Detect planning/travel intent
+        if any(word in message_lower for word in ["planning", "plan", "thinking", "going", "visit", "trip"]):
+            greetings = [
+                f"Great choice! {location_name} is a wonderful destination. ",
+                f"Excellent! {location_name} is an amazing place to visit. ",
+                f"How exciting! {location_name} awaits you. ",
+                f"Perfect! You'll love {location_name}. "
+            ]
+            import random
+            return random.choice(greetings)
+        
+        # Detect time-specific queries (this week, weekend, etc.)
+        if any(word in message_lower for word in ["this week", "weekend", "next week", "soon"]):
+            return f"Planning a trip to {location_name} soon? Here's what you need to know: "
+        
+        # Follow-up queries
+        if any(word in message_lower for word in ["more", "else", "other", "additional"]):
+            return "Sure, here's more information: "
+        
+        # Default - simple acknowledgment
+        return ""
+    
+    def _construct_response_text(self, intent: IntentType, loc: Location, data: dict, is_followup: bool = False, user_message: str = "") -> str:
         """Constructs a natural, human-like response based on intent and data."""
         parts = []
+        
+        # Add conversational greeting
+        if not is_followup:
+            greeting = self._generate_greeting(user_message, loc.name, intent)
+            if greeting:
+                parts.append(greeting)
         
         # Handle different intent combinations
         if intent == IntentType.WEATHER and "weather" in data:
             weather = data["weather"]
-            parts.append(self._format_weather(loc.name, weather))
+            weather_text = self._format_weather(loc.name, weather, include_recommendation=True)
+            parts.append(weather_text)
             
         elif intent == IntentType.PLACES and "places" in data:
             places_list = data.get("places", [])
+            restaurants_list = data.get("restaurants", [])
+            hotels_list = data.get("hotels", [])
+            
             if places_list:
-                # Use different phrasing for follow-up requests
+                # Tourist Attractions Section
                 if is_followup:
-                    parts.append(f"Here are some more places you can visit in {loc.name}:")
+                    parts.append(f"Here are some more great suggestions for {loc.name}:")
                 else:
-                    parts.append(f"In {loc.name} these are the places you can go:")
-                for place in places_list:
-                    parts.append(f"- {place}")
+                    parts.append(f"\n🗺️ **Places to Visit in {loc.name}:**")
+                
+                for place_dict in places_list:
+                    place_text = self._format_place(place_dict)
+                    parts.append(place_text)
+                
+                # Restaurants Section
+                if restaurants_list:
+                    parts.append(f"\n\n🍽️ **Top Restaurants:**")
+                    for restaurant in restaurants_list:
+                        parts.append(f"  • **{restaurant['name']}**")
+                
+                # Hotels Section
+                if hotels_list:
+                    parts.append(f"\n\n🏨 **Recommended Hotels:**")
+                    for hotel in hotels_list:
+                        parts.append(f"  • **{hotel['name']}**")
+                
+                # Add helpful tip
+                if not is_followup:
+                    parts.append(f"\n\n💡 *Tip: Ask me for 'more places' to see additional recommendations!*")
             else:
                 if is_followup:
-                    parts.append(f"I've shown you all the available tourist attractions in {loc.name}.")
+                    parts.append(f"I've shown you all available recommendations for {loc.name}. You're all set for an amazing trip!")
                 else:
-                    parts.append(f"I couldn't find any tourist attractions in {loc.name} at the moment.")
+                    parts.append(f"I couldn't find any recommendations for {loc.name} at the moment. Try asking about a nearby major city!")
                 
         elif intent == IntentType.BOTH:
             # Handle combined weather and places
             if "weather" in data:
                 weather = data["weather"]
-                parts.append(self._format_weather(loc.name, weather))
+                # Add weather with travel recommendation
+                weather_text = self._format_weather(loc.name, weather, include_recommendation=True)
+                parts.append(weather_text)
             
             if "places" in data:
                 places_list = data.get("places", [])
+                restaurants_list = data.get("restaurants", [])
+                hotels_list = data.get("hotels", [])
+                
                 if places_list:
                     parts.append("")  # Empty line for spacing
+                    
+                    # Tourist Attractions
                     if is_followup:
-                        parts.append(f"Here are some more places you can visit in {loc.name}:")
+                        parts.append(f"Here are more great recommendations:")
                     else:
-                        parts.append(f"And these are the places you can go:")
-                    for place in places_list:
-                        parts.append(f"- {place}")
+                        parts.append(f"\n🗺️ **Places to Visit:**")
+                    
+                    for place_dict in places_list:
+                        place_text = self._format_place(place_dict)
+                        parts.append(place_text)
+                    
+                    # Restaurants Section
+                    if restaurants_list:
+                        parts.append(f"\n\n🍽️ **Top Restaurants:**")
+                        for restaurant in restaurants_list:
+                            parts.append(f"  • **{restaurant['name']}**")
+                    
+                    # Hotels Section
+                    if hotels_list:
+                        parts.append(f"\n\n🏨 **Recommended Hotels:**")
+                        for hotel in hotels_list:
+                            parts.append(f"  • **{hotel['name']}**")
+                    
+                    # Add encouraging note
+                    if not is_followup:
+                        parts.append(f"\n\n✨ Have a fantastic trip to {loc.name}!")
         
         return "\n".join(parts) if parts else f"I found information about {loc.name}, but couldn't retrieve specific details."
     
-    def _format_weather(self, location_name: str, weather: dict) -> str:
-        """Formats weather data into a readable string."""
+    def _format_weather(self, location_name: str, weather: dict, include_recommendation: bool = False) -> str:
+        """Formats weather data into a readable string with travel recommendations."""
         lines = []
         
         # Current weather
@@ -313,13 +410,19 @@ class ParentAgent:
         humidity = weather.get("humidity")
         wind_speed = weather.get("wind_speed")
         
-        # Main weather line
-        weather_line = f"In {location_name} it's currently {temp}°C with {condition}."
+        lines.append(f"\n🌤️ **Weather in {location_name}:**")
+        
+        # Main weather line with more natural language
+        weather_line = f"Right now, it's {temp}°C with {condition.lower()}"
         
         # Add feels like if different
         if feels_like and abs(feels_like - temp) > 2:
-            weather_line += f" Feels like {feels_like}°C."
+            if feels_like > temp:
+                weather_line += f" (feels warmer at {feels_like}°C)"
+            else:
+                weather_line += f" (feels cooler at {feels_like}°C)"
         
+        weather_line += "."
         lines.append(weather_line)
         
         # Additional details
@@ -351,14 +454,47 @@ class ParentAgent:
             conditions = [day["condition"] for day in daily_forecast]
             most_common = max(set(conditions), key=conditions.count)
             
-            # Build summary
-            summary = f"📅 Week ahead: Expect temperatures between {min_temp:.0f}°C and {max_temp:.0f}°C"
+            # Build summary with natural language
+            summary = f"📅 **This Week:** Temperatures will range from {min_temp:.0f}°C to {max_temp:.0f}°C"
             
             if rainy_days > 0:
-                summary += f", with rain likely on {rainy_days} day{'s' if rainy_days > 1 else ''}."
+                summary += f", with rain expected on {rainy_days} day{'s' if rainy_days > 1 else ''}."
             else:
-                summary += f", mostly {most_common.lower()}."
+                summary += f". Expect mostly {most_common.lower()} conditions."
             
             lines.append(summary)
+            
+            # Add travel recommendation based on weather
+            if include_recommendation:
+                lines.append("")
+                recommendation = self._get_weather_recommendation(temp, rain_prob, rainy_days, condition)
+                if recommendation:
+                    lines.append(f"💡 **Travel Tip:** {recommendation}")
+        
         return "\n".join(lines)
+    
+    def _get_weather_recommendation(self, temp: float, rain_prob: int, rainy_days: int, condition: str) -> str:
+        """Generate travel recommendation based on weather conditions."""
+        recommendations = []
+        
+        # Temperature-based recommendations
+        if temp < 10:
+            recommendations.append("Pack warm clothes and layers!")
+        elif temp > 30:
+            recommendations.append("It's hot! Stay hydrated and use sunscreen.")
+        elif 15 <= temp <= 25:
+            recommendations.append("Perfect weather for sightseeing!")
+        
+        # Rain-based recommendations
+        if rain_prob > 60 or rainy_days >= 3:
+            recommendations.append("Don't forget your umbrella and rain jacket.")
+        elif rainy_days == 0 and "Clear" in condition:
+            recommendations.append("Great weather for outdoor activities!")
+        
+        return " ".join(recommendations) if recommendations else "Have a wonderful trip!"
+    
+    def _format_place(self, place_dict: dict) -> str:
+        """Format a place with its name."""
+        name = place_dict.get("name", "Unknown")
+        return f"  • **{name}**"
         

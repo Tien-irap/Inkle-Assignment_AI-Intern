@@ -48,7 +48,7 @@ class PlacesService:
         # 4. Combine and prioritize: Overpass places first (they have exact coords), then LLM
         combined_places = overpass_places + llm_places
         
-        # 5. Cache combined results
+        # 5. Cache results
         places_dicts = [p.dict() for p in combined_places[:50]]
         await self.repo.cache_places(lat, lon, places_dicts)
         

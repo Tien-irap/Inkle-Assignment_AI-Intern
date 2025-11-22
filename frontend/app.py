@@ -3,6 +3,7 @@ import requests
 import uuid
 from datetime import datetime
 import json
+import re
 
 # Page configuration
 st.set_page_config(
@@ -34,6 +35,13 @@ st.markdown("""
     .assistant-message {
         background-color: #2c7524;
         border-left: 4px solid #43A047;
+    }
+    .assistant-message a {
+        color: #90CAF9;
+        text-decoration: underline;
+    }
+    .assistant-message a:hover {
+        color: #64B5F6;
     }
     .success-box {
         padding: 1rem;
@@ -104,12 +112,32 @@ def check_backend_health() -> bool:
     except:
         return False
 
+def markdown_to_html(text: str) -> str:
+    """Convert Markdown links and formatting to HTML."""
+    # Convert bold **text** to <b>text</b>
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    # Convert italic _text_ to <i>text</i>
+    text = re.sub(r'_(.+?)_', r'<i>\1</i>', text)
+    # Convert Markdown links [text](url) to HTML <a> tags
+    text = re.sub(r'\[(.+?)\]\((.+?)\)', r'<a href="\2" target="_blank">\1</a>', text)
+    # Convert newlines to <br> tags
+    text = text.replace('\n', '<br>')
+    return text
+
 def display_message(role: str, content: str, metadata: dict = None):
     """Display a chat message with proper formatting."""
     if role == "user":
         st.markdown(f'<div class="chat-message user-message"><b>You:</b><br>{content}</div>', unsafe_allow_html=True)
     else:
-        st.markdown(f'<div class="chat-message assistant-message"><b>🤖 Travel Assistant:</b><br>{content}</div>', unsafe_allow_html=True)
+        # Convert Markdown to HTML for proper link rendering
+        html_content = markdown_to_html(content)
+        message_container = f"""
+        <div class="chat-message assistant-message">
+            <b>🤖 Travel Assistant:</b><br><br>
+            {html_content}
+        </div>
+        """
+        st.markdown(message_container, unsafe_allow_html=True)
         
         # Show debug info if enabled
         if metadata and st.session_state.show_debug:
