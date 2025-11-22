@@ -4,7 +4,7 @@ Building a multi-agent tourism system with LangGraph-inspired state management
 ## 🌐 Live Demo
 
 **Try it now!**
-- **Frontend**: https://inkle-assignment-ai-intern-1.onrender.com
+- **Frontend**: https://inkle-assignment-ai-intern-frontend.onrender.com
 - **Backend API**: https://inkle-assignment-ai-intern-qj70.onrender.com
 - **API Docs**: https://inkle-assignment-ai-intern-qj70.onrender.com/docs
 
