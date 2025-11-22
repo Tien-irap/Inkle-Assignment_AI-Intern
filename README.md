@@ -8,7 +8,7 @@ Building a multi-agent tourism system with LangGraph-inspired state management
 - **Backend API**: https://inkle-assignment-ai-intern-qj70.onrender.com
 - **API Docs**: https://inkle-assignment-ai-intern-qj70.onrender.com/docs
 
-> ⚠️ **Note**: Services may take 30-60 seconds to wake up on first request (free tier cold start)
+> ⚠️ **Note**: First open Backend Api and then Frontend Api! (Services may take 30-60 seconds to wake up on first request (free tier cold start))
 
 ---
 
