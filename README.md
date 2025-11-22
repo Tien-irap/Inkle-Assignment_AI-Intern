@@ -7,7 +7,11 @@ Building a multi-agent tourism system with LangGraph-inspired state management
 - **🎯 Deterministic State Management**: LangGraph-inspired architecture eliminates LLM hallucination in context handling
 - **💬 Natural Language Processing**: Understands queries like "What's the weather in Paris?"
 - **📍 Smart Location Tracking**: State-based location persistence across conversation
-- **🗺️ Hybrid Place Suggestions**: Combines Overpass API + LLM for comprehensive tourist attractions
+- **🗺️ Comprehensive Travel Recommendations**: 
+  - Tourist attractions (Overpass API + LLM suggestions)
+  - Top restaurants and cafes
+  - Recommended hotels and accommodations
+- **☁️ Real-time Weather Data**: Current conditions with 7-day forecasts
 - **⚡ Smart Caching**: 1-hour cache for weather and places data
 - **🎨 Interactive UI**: Streamlit-based chat interface with debug mode
 - **🐳 Docker Ready**: Full containerization with Docker Compose
@@ -206,9 +210,52 @@ This project uses a **deterministic state management** approach inspired by Lang
 - **State Management**: LangGraph-inspired (langgraph, langchain-core)
 - **Frontend**: Streamlit
 - **Database**: MongoDB
-- **LLM**: Mistral AI (for extraction only, not context)
-- **APIs**: Open-Meteo (weather), Overpass (places), Nominatim (geocoding)
+- **LLM Providers**: Mistral AI, OpenAI, Anthropic Claude, Groq
+- **APIs**: 
+  - Open-Meteo (weather data)
+  - Overpass API (tourist attractions)
+  - Nominatim (geocoding)
+  - LLM (restaurants & hotels suggestions)
 - **Containerization**: Docker, Docker Compose
+
+## 💡 How It Works
+
+### Query Examples
+
+**Weather Queries:**
+```
+"What's the weather in Tokyo?"
+"Show me weather in Paris"
+"Is it raining in Mumbai?"
+```
+
+**Places Queries:**
+```
+"Places to visit in London"
+"Show me attractions in Dubai"
+"I'm going to Bangkok, what can I visit?"
+```
+
+**Combined Queries:**
+```
+"Plan my trip to Singapore"
+"I'm traveling to Rome, give me weather and places"
+```
+
+### Response Format
+
+When you ask about places, you'll get three separate sections:
+
+1. **🗺️ Places to Visit** - Tourist attractions, landmarks, museums (up to 8)
+2. **🍽️ Top Restaurants** - Recommended restaurants and cafes (5)
+3. **🏨 Recommended Hotels** - Top hotels and accommodations (5)
+
+### Smart Features
+
+- **Context Awareness**: Say "show me places there" after mentioning a city
+- **No Repeats**: Ask "more places" to see additional suggestions without duplicates
+- **Natural Language**: Talk naturally - "I'm going to Paris" works just like "Places in Paris"
+- **Conversation Memory**: Maintains context throughout your session
 
 ## 📚 Documentation
 
