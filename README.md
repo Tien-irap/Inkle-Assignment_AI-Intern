@@ -261,4 +261,3 @@ When you ask about places, you'll get three separate sections:
 
 - **[RUN.md](RUN.md)** - How to run the application (Docker, Python scripts, manual)
 - **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Comprehensive testing scenarios
-- **[LANGGRAPH_ARCHITECTURE.md](LANGGRAPH_ARCHITECTURE.md)** - State management deep dive
