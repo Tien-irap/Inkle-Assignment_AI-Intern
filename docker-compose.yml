@@ -1,0 +1,56 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: travel_agent_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - travel_agent_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: travel_agent_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - MONGO_URI=mongodb://mongodb:27017
+      - MONGO_DB_NAME=travel_agent_db
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - LOGGER=20
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - travel_agent_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: travel_agent_frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+    networks:
+      - travel_agent_network
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+
+networks:
+  travel_agent_network:
+    driver: bridge

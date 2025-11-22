@@ -35,13 +35,6 @@ st.markdown("""
         background-color: #2c7524;
         border-left: 4px solid #43A047;
     }
-    .info-box {
-        padding: 1rem;
-        background-color: #f7ddb2;
-        border-radius: 0.5rem;
-        border-left: 4px solid #FF9800;
-        margin: 1rem 0;
-    }
     .success-box {
         padding: 1rem;
         background-color: #207a27;
@@ -64,7 +57,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Backend API configuration
-BACKEND_URL = "http://localhost:8000"
+import os
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 # Initialize session state
 if "session_id" not in st.session_state:

@@ -1,0 +1,27 @@
+# Docker ignore patterns
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.log
+.env
+.venv
+venv/
+ENV/
+myenv/
+.git/
+.gitignore
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+logs/
+test_*.py

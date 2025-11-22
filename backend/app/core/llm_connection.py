@@ -2,15 +2,49 @@ import httpx
 import logging
 from app.core.config import settings
 from app.core.logger import logs
+from app.core.llm_providers import (
+    BaseLLMProvider,
+    MistralProvider,
+    OpenAIProvider,
+    AnthropicProvider,
+    GroqProvider
+)
 
 class LLMService:
     def __init__(self):
-        self.api_key = settings.MISTRAL_API_KEY
-        self.base_url = "https://api.mistral.ai/v1/chat/completions"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        self.provider = self._initialize_provider()
+        logs.log(logging.INFO, f"🤖 LLM Provider initialized: {self.provider.get_provider_name()}")
+    
+    def _initialize_provider(self) -> BaseLLMProvider:
+        """Initialize the selected LLM provider based on settings"""
+        provider = settings.LLM_PROVIDER.lower()
+        
+        if provider == "mistral":
+            return MistralProvider(
+                api_key=settings.MISTRAL_API_KEY,
+                model=settings.MISTRAL_MODEL
+            )
+        elif provider == "openai":
+            return OpenAIProvider(
+                api_key=settings.OPENAI_API_KEY,
+                model=settings.OPENAI_MODEL
+            )
+        elif provider == "anthropic":
+            return AnthropicProvider(
+                api_key=settings.ANTHROPIC_API_KEY,
+                model=settings.ANTHROPIC_MODEL
+            )
+        elif provider == "groq":
+            return GroqProvider(
+                api_key=settings.GROQ_API_KEY,
+                model=settings.GROQ_MODEL
+            )
+        else:
+            logs.log(logging.WARNING, f"Unknown provider '{provider}', defaulting to Mistral")
+            return MistralProvider(
+                api_key=settings.MISTRAL_API_KEY,
+                model=settings.MISTRAL_MODEL
+            )
 
     async def extract_location_with_context(self, user_message: str, chat_history: list = None) -> str | None:
         """
@@ -40,33 +74,17 @@ class LLMService:
         # Add current message
         messages.append({"role": "user", "content": user_message})
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": messages,
-            "temperature": 0.1
-        }
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                
-                if content.upper() == "NONE" or not content:
-                    return None
-                
-                return content
-
-            except Exception as e:
-                logs.log(logging.ERROR, f"Location extraction with context API Failed: {str(e)}")
+        try:
+            content = await self.provider.generate(messages, temperature=0.1, timeout=10.0)
+            
+            if content.upper() == "NONE" or not content:
                 return None
+            
+            return content
+
+        except Exception as e:
+            logs.log(logging.ERROR, f"Location extraction with context failed: {str(e)}")
+            return None
 
     async def extract_location_from_current_message(self, user_message: str) -> str | None:
         """
@@ -88,34 +106,18 @@ class LLMService:
             {"role": "user", "content": user_message}
         ]
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": messages,
-            "temperature": 0.1
-        }
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                
-                if content.upper() == "NONE" or not content:
-                    return None
-                
-                logs.log(logging.INFO, f"Extracted location from current message: {content}")
-                return content
-
-            except Exception as e:
-                logs.log(logging.ERROR, f"Location extraction from current message API Failed: {str(e)}")
+        try:
+            content = await self.provider.generate(messages, temperature=0.1, timeout=10.0)
+            
+            if content.upper() == "NONE" or not content:
                 return None
+            
+            logs.log(logging.INFO, f"Extracted location from current message: {content}")
+            return content
+
+        except Exception as e:
+            logs.log(logging.ERROR, f"Location extraction from current message failed: {str(e)}")
+            return None
 
     async def extract_location(self, user_message: str) -> str | None:
         """
@@ -129,36 +131,22 @@ class LLMService:
             "If no location is mentioned, return 'NONE'."
         )
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"User said: '{user_message}'"}
-            ],
-            "temperature": 0.1
-        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"User said: '{user_message}'"}
+        ]
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                
-                if content.upper() == "NONE" or not content:
-                    return None
-                
-                return content
-
-            except Exception as e:
-                logs.log(logging.ERROR, f"Location extraction API Failed: {str(e)}")
+        try:
+            content = await self.provider.generate(messages, temperature=0.1, timeout=10.0)
+            
+            if content.upper() == "NONE" or not content:
                 return None
+            
+            return content
+
+        except Exception as e:
+            logs.log(logging.ERROR, f"Location extraction failed: {str(e)}")
+            return None
 
     async def classify_intent_from_current_message(self, user_message: str) -> str | None:
         """
@@ -183,39 +171,24 @@ class LLMService:
             {"role": "user", "content": user_message}
         ]
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": messages,
-            "temperature": 0.1
-        }
-
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip().upper()
-                
-                if content == "UNCLEAR":
-                    logs.log(logging.INFO, f"Intent unclear from current message, will use context")
-                    return None
-                
-                if content in ["WEATHER", "PLACES", "BOTH"]:
-                    logs.log(logging.INFO, f"Intent classified from current message: {content}")
-                    return content
-                
-                logs.log(logging.WARNING, f"LLM returned invalid intent: {content}. Will use context.")
+        try:
+            content = await self.provider.generate(messages, temperature=0.1, timeout=10.0)
+            content = content.upper()
+            
+            if content == "UNCLEAR":
+                logs.log(logging.INFO, f"Intent unclear from current message, will use context")
                 return None
+            
+            if content in ["WEATHER", "PLACES", "BOTH"]:
+                logs.log(logging.INFO, f"Intent classified from current message: {content}")
+                return content
+            
+            logs.log(logging.WARNING, f"LLM returned invalid intent: {content}. Will use context.")
+            return None
 
-            except Exception as e:
-                logs.log(logging.ERROR, f"Intent classification from current message failed: {str(e)}")
-                return None
+        except Exception as e:
+            logs.log(logging.ERROR, f"Intent classification from current message failed: {str(e)}")
+            return None
 
     async def classify_intent_with_context(self, user_message: str, chat_history: list = None) -> str:
         """
@@ -246,34 +219,19 @@ class LLMService:
         # Add current message
         messages.append({"role": "user", "content": user_message})
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": messages,
-            "temperature": 0.1
-        }
+        try:
+            content = await self.provider.generate(messages, temperature=0.1, timeout=10.0)
+            content = content.upper()
+            
+            if content in ["WEATHER", "PLACES", "BOTH"]:
+                return content
+            
+            logs.log(logging.WARNING, f"LLM returned invalid intent: {content}. Defaulting to BOTH.")
+            return "BOTH"
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip().upper()
-                
-                if content in ["WEATHER", "PLACES", "BOTH"]:
-                    return content
-                
-                logs.log(logging.WARNING, f"LLM returned invalid intent: {content}. Defaulting to BOTH.")
-                return "BOTH"
-
-            except Exception as e:
-                logs.log(logging.ERROR, f"Intent classification with context failed: {str(e)}")
-                return "BOTH"
+        except Exception as e:
+            logs.log(logging.ERROR, f"Intent classification with context failed: {str(e)}")
+            return "BOTH"
 
     async def enhance_places_suggestions(self, location_name: str, existing_places: list[str]) -> list[str]:
         """
@@ -295,50 +253,36 @@ class LLMService:
         
         user_prompt = f"List the top tourist attractions to visit in {location_name}.{existing_context}"
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "temperature": 0.3
-        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url,
-                    json=payload,
-                    headers=self.headers,
-                    timeout=15.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip()
-                
-                # Parse the numbered list
-                places = []
-                for line in content.split("\n"):
-                    line = line.strip()
-                    # Remove numbering (1., 2., 1), etc.)
-                    if line and (line[0].isdigit() or line.startswith("-")):
-                        # Remove leading numbers, dots, dashes, parentheses
-                        cleaned = line.lstrip("0123456789.-) ")
-                        if cleaned:
-                            places.append(cleaned)
-                
-                logs.log(logging.INFO, f"LLM suggested {len(places)} places for {location_name}")
-                return places[:20]  # Limit to 20
+        try:
+            content = await self.provider.generate(messages, temperature=0.3, timeout=15.0)
+            
+            # Parse the numbered list
+            places = []
+            for line in content.split("\n"):
+                line = line.strip()
+                # Remove numbering (1., 2., 1), etc.)
+                if line and (line[0].isdigit() or line.startswith("-")):
+                    # Remove leading numbers, dots, dashes, parentheses
+                    cleaned = line.lstrip("0123456789.-) ")
+                    if cleaned:
+                        places.append(cleaned)
+            
+            logs.log(logging.INFO, f"LLM suggested {len(places)} places for {location_name}")
+            return places[:20]  # Limit to 20
 
-            except Exception as e:
-                logs.log(logging.ERROR, f"LLM places suggestion failed: {str(e)}")
-                return []
+        except Exception as e:
+            logs.log(logging.ERROR, f"LLM places suggestion failed: {str(e)}")
+            return []
 
     async def classify_intent(self, user_message: str) -> str:
         """
         Step B: Intent Classification (The Router)
-        Sends prompt to Mistral to decide between WEATHER, PLACES, or BOTH.
+        Sends prompt to LLM to decide between WEATHER, PLACES, or BOTH.
         """
         
         system_prompt = (
@@ -351,39 +295,26 @@ class LLMService:
             "Return ONLY the category name. Do not add punctuation or extra text."
         )
 
-        payload = {
-            "model": settings.MISTRAL_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"User said: '{user_message}'"}
-            ],
-            "temperature": 0.1 # Low temp for deterministic classification
-        }
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"User said: '{user_message}'"}
+        ]
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    self.base_url, 
-                    json=payload, 
-                    headers=self.headers, 
-                    timeout=10.0
-                )
-                response.raise_for_status()
-                
-                data = response.json()
-                content = data["choices"][0]["message"]["content"].strip().upper()
-                
-                # Simple validation to ensure LLM didn't hallucinate a new category
-                if content in ["WEATHER", "PLACES", "BOTH"]:
-                    return content
-                
-                logs.log(logging.WARNING, f"LLM returned invalid intent: {content}. Defaulting to BOTH.")
-                return "BOTH"
+        try:
+            content = await self.provider.generate(messages, temperature=0.1, timeout=10.0)
+            content = content.upper()
+            
+            # Simple validation to ensure LLM didn't hallucinate a new category
+            if content in ["WEATHER", "PLACES", "BOTH"]:
+                return content
+            
+            logs.log(logging.WARNING, f"LLM returned invalid intent: {content}. Defaulting to BOTH.")
+            return "BOTH"
 
-            except Exception as e:
-                logs.log(logging.ERROR, f"LLM API Failed: {str(e)}")
-                # Fallback mechanism if LLM is down
-                return "BOTH"
+        except Exception as e:
+            logs.log(logging.ERROR, f"LLM API Failed: {str(e)}")
+            # Fallback mechanism if LLM is down
+            return "BOTH"
 
 # Singleton instance
 llm_client = LLMService()

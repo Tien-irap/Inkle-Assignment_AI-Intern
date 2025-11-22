@@ -27,3 +27,7 @@ pytz==2025.2
 
 # DNS Resolution (for MongoDB)
 dnspython==2.8.0
+
+# LangGraph for state management
+langgraph==0.2.57
+langchain-core==0.3.28

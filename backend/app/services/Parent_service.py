@@ -5,6 +5,7 @@ from app.models.base_model import ChatResponse, ChatRequest, Location, IntentTyp
 from app.repos.base_repo import ChatRepository
 from app.core.logger import logs
 from app.core.llm_connection import llm_client
+from app.services.session_state import SessionStateManager
 from app.services.Weather_service import WeatherService
 from app.services.Places_service import PlacesService
 from app.repos.weather_repo import WeatherRepository
@@ -17,6 +18,7 @@ NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 class ParentAgent:
     def __init__(self, repo: ChatRepository, db: AsyncIOMotorDatabase = None):
         self.repo = repo
+        self.state_manager = SessionStateManager(db) if db is not None else None
         # Initialize child services
         if db is not None:
             self.weather_service = WeatherService(WeatherRepository(db))
@@ -27,71 +29,92 @@ class ParentAgent:
 
     async def process_request(self, request: ChatRequest) -> ChatResponse:
         """
-        The Brain: Orchestrates the logic flow A -> B -> C with conversation context
+        The Brain: Orchestrates logic using LangGraph-inspired state management
+        State-based approach eliminates LLM hallucination in context handling
         """
         logs.log(logging.INFO, f"Processing request for session: {request.session_id}", extra={"msg": request.message})
         
         steps = []
         response_data = {}
         
-        # --- Step A: Entity Extraction & Geocoding (The Guardrail) ---
-        # Strategy: Try current message first, only use context as fallback
+        # --- Step 0: Get Session State (THE KEY DIFFERENCE) ---
+        # Load persistent state from MongoDB - this is our "memory"
+        session_state = await self.state_manager.get_state(request.session_id)
+        logs.log(logging.INFO, f"Loaded session state - current_location: {session_state.get('current_location')}")
         
-        # 1. First, try extracting location from CURRENT message ONLY (no context)
+        # --- Step A: Entity Extraction & Geocoding (State-based) ---
+        # Strategy: Extract from current message, update STATE if found, else use STATE
+        
+        # 1. Try extracting location from CURRENT message ONLY
         location_query = await llm_client.extract_location_from_current_message(request.message)
         
-        if location_query:
-            logs.log(logging.INFO, f"Location found in current message: {location_query}")
-            # Location found! Proceed directly to geocoding
+        if location_query and location_query.upper() != "NONE":
+            # NEW LOCATION FOUND - This is the "Updater" logic
+            logs.log(logging.INFO, f"✨ New location mentioned: {location_query}")
             location = await self._geocode(location_query)
+            
+            if location:
+                # UPDATE STATE - This persists across all future messages
+                await self.state_manager.update_location(
+                    request.session_id,
+                    location.name,
+                    location.lat,
+                    location.lon
+                )
+                logs.log(logging.INFO, f"✅ State updated: current_location = {location.name}")
+            else:
+                # Geocoding failed for extracted location
+                logs.log(logging.WARNING, f"Geocoding failed for extracted location: {location_query}")
+                return ChatResponse(
+                    session_id=request.session_id,
+                    message=f"I'm sorry, I couldn't find a location matching '{location_query}'. Could you be more specific?",
+                    intent=IntentType.UNKNOWN,
+                    steps=[AgentStep(step_name="Geocoding", status="failed", details=f"No results for {location_query}")]
+                )
         else:
-            # No location in current message, now use context as fallback
-            logs.log(logging.INFO, "No location in current message, checking context...")
+            # NO NEW LOCATION - This is the "Reader" logic
+            logs.log(logging.INFO, "No new location in message, checking STATE...")
             
-            # Get conversation history for context
-            chat_history = await self.repo.get_chat_history(request.session_id, limit=10)
-            logs.log(logging.INFO, f"Retrieved {len(chat_history)} previous messages for context")
-            
-            # Try context-aware extraction
-            location_query = await llm_client.extract_location_with_context(request.message, chat_history)
-            
-            if not location_query:
-                # Final fallback to basic cleaning
-                location_query = self._clean_query_for_geocoding(request.message)
-            
-            logs.log(logging.INFO, f"Extracted location from context: {location_query}")
-            location = await self._geocode(location_query)
-        
-        # Get chat history for intent classification (needed regardless)
-        if 'chat_history' not in locals():
-            chat_history = await self.repo.get_chat_history(request.session_id, limit=10)
-
-        if not location:
-            logs.log(logging.WARNING, f"Geocoding failed for query: {location_query}")
-            return ChatResponse(
-                session_id=request.session_id,
-                message=f"I'm sorry, I couldn't find a location matching '{location_query}'. Could you be more specific?",
-                intent=IntentType.UNKNOWN,
-                steps=[AgentStep(step_name="Geocoding", status="failed", details=f"No results for {location_query}")]
-            )
+            # Read from STATE (not from chat history!)
+            if session_state.get("current_location"):
+                # We have a location in state - use it!
+                location = Location(
+                    name=session_state["current_location"],
+                    lat=session_state["current_lat"],
+                    lon=session_state["current_lon"]
+                )
+                logs.log(logging.INFO, f"📍 Using location from STATE: {location.name}")
+            else:
+                # No location in state and none in message - can't proceed
+                logs.log(logging.WARNING, "No location found in message or state")
+                return ChatResponse(
+                    session_id=request.session_id,
+                    message="I need to know which location you're interested in. Could you please mention a city or place?",
+                    intent=IntentType.UNKNOWN,
+                    steps=[AgentStep(step_name="Location Extraction", status="failed", details="No location in message or state")]
+                )
         
         steps.append(AgentStep(step_name="Geocoding", status="success", details=f"Found {location.name}"))
 
-        # --- Step B: Intent Classification (The Router) ---
-        # Strategy: Try current message first, only use context as fallback
+        # --- Step B: Intent Classification ---
+        # Simple, no context needed - just analyze current message
         
-        # 1. First, try classifying intent from CURRENT message ONLY (no context)
         intent_str = await llm_client.classify_intent_from_current_message(request.message)
         
         if not intent_str:
-            # Intent unclear from current message, use context as fallback
-            logs.log(logging.INFO, "Intent unclear from current message, checking context...")
-            intent_str = await llm_client.classify_intent_with_context(request.message, chat_history)
+            # Use simple keyword matching as fallback
+            message_lower = request.message.lower()
+            if any(word in message_lower for word in ["weather", "temperature", "climate"]):
+                intent_str = "WEATHER"
+            elif any(word in message_lower for word in ["place", "visit", "suggest", "more"]):
+                intent_str = "PLACES"
+            else:
+                intent_str = "BOTH"
+            logs.log(logging.INFO, f"Intent determined by keywords: {intent_str}")
         
         try:
             intent = IntentType(intent_str)
         except ValueError:
-            # Fallback if LLM returns something unexpected
             intent = IntentType.BOTH 
             logs.log(logging.WARNING, f"LLM returned undefined intent '{intent_str}', defaulting to BOTH")
 
@@ -139,26 +162,16 @@ class ParentAgent:
                     places_response = await self.places_service.get_places(location.lat, location.lon, location.name)
                     all_places = [place.name for place in places_response.places]
                     
-                    # Get previously shown places from chat history
-                    shown_places = set()
-                    for chat in chat_history:
-                        # Extract places from previous responses
-                        bot_msg = chat.get("bot_response", "")
-                        if "places you can" in bot_msg.lower() or "these are the places" in bot_msg.lower():
-                            # Extract place names from the response (lines starting with -)
-                            lines = bot_msg.split("\n")
-                            for line in lines:
-                                line_stripped = line.strip()
-                                if line_stripped.startswith("- "):
-                                    place_name = line_stripped[2:].strip()  # Remove "- " prefix
-                                    if place_name:
-                                        shown_places.add(place_name)
-                    
-                    logs.log(logging.INFO, f"Found {len(shown_places)} previously shown places in chat history")
+                    # Get previously shown places from STATE (not chat history!)
+                    shown_places = set(session_state.get("shown_places", []))
+                    logs.log(logging.INFO, f"Found {len(shown_places)} previously shown places in STATE")
                     
                     # Filter out already shown places and show up to 8 new ones
                     new_places = [p for p in all_places if p not in shown_places]
                     places_to_show = new_places[:8] if new_places else all_places[:8]
+                    
+                    # Update STATE with newly shown places
+                    await self.state_manager.add_shown_places(request.session_id, places_to_show)
                     
                     places_data = places_to_show
                     response_data["places"] = places_data
@@ -174,8 +187,8 @@ class ParentAgent:
                 steps.append(AgentStep(step_name="Places Agent", status="skipped", details="Service not initialized"))
 
         # --- Finalize ---
-        # Detect if this is a follow-up request
-        is_followup = len(chat_history) > 0 and any(
+        # Detect if this is a follow-up request (simple keyword matching)
+        is_followup = any(
             keyword in request.message.lower() 
             for keyword in ["more", "else", "other", "another", "additional"]
         )
