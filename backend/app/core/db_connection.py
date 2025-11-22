@@ -1,41 +1,30 @@
-from pymongo import MongoClient
-from pymongo.database import Database
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from app.core.config import settings
 
-from .config import settings
-
-class DBConnection:
+class AsyncDBConnection:
     """
-    Manages the connection to the MongoDB database.
-    This class ensures that there is only one client instance created.
+    Manages the asynchronous connection to the MongoDB database.
     """
-    _client: MongoClient | None = None
+    _client: AsyncIOMotorClient | None = None
 
     def __init__(self):
-        # Establish connection to MongoDB using the URI from settings.
-        if DBConnection._client is None:
-            DBConnection._client = MongoClient(settings.MONGO_URI)
+        if AsyncDBConnection._client is None:
+            # Motor client is non-blocking
+            AsyncDBConnection._client = AsyncIOMotorClient(settings.MONGO_URI)
 
-    def get_database(self) -> Database:
+    def get_database(self) -> AsyncIOMotorDatabase:
         """
-        Returns the database instance specified in the settings.
-
-        Returns:
-            Database: The PyMongo database object.
+        Returns the async database instance.
         """
-        if DBConnection._client is None:
-            # This should not happen if initialized properly, but it's a safeguard.
+        if AsyncDBConnection._client is None:
             self.__init__()
         
-        # This is guaranteed to not be None because of the check above.
-        client = DBConnection._client
+        client = AsyncDBConnection._client
         return client[settings.MONGO_DB_NAME]
 
-# Instantiate the connection manager.
-db_connection = DBConnection()
+# Instantiate the connection manager
+db_connection = AsyncDBConnection()
 
-# A simple function to be used as a FastAPI dependency to get the DB instance.
-def get_db() -> Database:
-    """
-    Returns a database instance from the connection manager.
-    """
+# Dependency for FastAPI
+async def get_db() -> AsyncIOMotorDatabase:
     return db_connection.get_database()

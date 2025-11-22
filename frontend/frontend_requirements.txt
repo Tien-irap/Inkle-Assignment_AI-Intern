@@ -1,0 +1,5 @@
+# Web Framework
+streamlit==1.40.2
+
+# HTTP Client
+requests==2.32.3
